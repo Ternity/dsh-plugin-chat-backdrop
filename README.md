@@ -57,6 +57,39 @@ GitHub 页面 → **Code ▾ → Download ZIP** → 解压 → 插件页 **添�
 > 要求：DSH 0.2.x（客户端插件 `dsh.client` 契约）。实测于 0.2.0-rc.2 / 0.2.1。
 > 宿主会对 `git` 规格做一次 `git ls-remote` 预检，所以仓库必须能从目标机器访问到。
 
+### 网络受限时（github.com 连不上）
+
+`github:` / `git+https://github.com/...` 规格走的是 **github.com 的 HTTPS**。有些网络里
+`git clone https://github.com/...` 会直接失败（`schannel: failed to receive handshake`），
+此时用下面任意一条路：
+
+**① codeload tarball 地址**（管理器支持"压缩包"来源，且对压缩包**不做** GitHub 预检；
+实测 `codeload.github.com` 在 github.com 被墙时仍可达）：
+
+```
+https://codeload.github.com/Ternity/dsh-plugin-chat-backdrop/tar.gz/refs/heads/main
+```
+
+想锁定到某个提交（可复现、不会跟着 main 变）：
+
+```
+https://codeload.github.com/Ternity/dsh-plugin-chat-backdrop/tar.gz/<commit-sha>
+```
+
+**② 下载 ZIP → 本地绝对路径**：GitHub 页面 **Code ▾ → Download ZIP**，解压后把目录绝对路径
+填进「添加插件」（本地路径是官方支持的来源）。
+
+**③ 有 GitHub SSH key 的机器**（`~/.ssh/config` 配好 `github.com` + 私钥）：
+
+```
+git+ssh://git@github.com/Ternity/dsh-plugin-chat-backdrop.git
+```
+
+三条路装出来的是同一个包 —— 仓库里带了构建好的 `dist/client.js`，目标机器不需要 Node / 构建步骤。
+
+> **升级**：DSH 目前对插件安装后不做自动更新，流程是先卸载再装新版（同上任何一种来源）。
+> 你本地选过的背景图与透明度存在 `localStorage`，重装不会丢。
+
 ## 日常使用：设置 → 通用
 
 | 行 / 控件 | 作用 |
