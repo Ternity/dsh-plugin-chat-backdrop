@@ -1,0 +1,43 @@
+name: verify
+
+# The repo ships a prebuilt dist/client.js, because installing the plugin must
+# not require Node, pnpm or a build step on the target machine. This job keeps
+# that promise honest: the committed bundle must equal what the committed
+# source produces, and it must parse as a classic script.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  dist-in-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Rebuild the client bundle from source
+        run: node tools/build-client.mjs
+      - name: Committed dist must match the source
+        run: |
+          if ! git diff --exit-code -- dist/client.js; then
+            echo "::error::dist/client.js is stale. Run 'node tools/build-client.mjs' and commit the result."
+            exit 1
+          fi
+      - name: Bundle must parse
+        run: node --check dist/client.js
+      - name: Manifests must parse and point at real files
+        run: node -e "
+          const fs = require('node:fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const fail = (m) => { console.error('::error::' + m); process.exit(1); };
+          if (pkg.name !== 'dsh-plugin-chat-backdrop') fail('package name changed');
+          if (!pkg.dsh || !pkg.dsh.client || pkg.dsh.client.platform !== 'web') fail('dsh.client.platform must be web');
+          for (const path of [pkg.main, pkg.exports['.'], pkg.exports['./client'], pkg.dsh.bundle.patch]) {
+            if (!path || !fs.existsSync(path)) fail('missing file referenced by package.json: ' + path);
+          }
+          if (!/window\.__ModuleLoader__\.load\(\{/.test(fs.readFileSync(pkg.exports['./client'], 'utf8'))) fail('client bundle does not register a module');
+          console.log('manifest ok');
+        "

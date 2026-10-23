@@ -1,0 +1,14 @@
+# Local install artifacts and scratch: a profile backup belongs to the machine
+# that installed the plugin, never to the published package.
+_backup/
+_preview.png
+node_modules/
+__pycache__/
+*.pyc
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

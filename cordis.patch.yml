@@ -1,0 +1,13 @@
+# This bundle's patch layer, applied on top of the profile's bundle layers.
+#
+# One loader row mounts the package's host half (`lib/index.js`). The row is what
+# makes the package visible to the profile; the browser half is *not* named here
+# — it is discovered from `dsh.client` in package.json and served from the
+# `./client` export of dist/client.js.
+#
+# Disable the whole effect with either of:
+#   * the 插件 page in the sidebar  ->  turn the `chat-backdrop` row off
+#   * plugin_manager set_plugin     ->  {"entryId": "chat-backdrop", "enabled": false}
+- insert:
+    - id: chat-backdrop
+      name: 'dsh-plugin-chat-backdrop'

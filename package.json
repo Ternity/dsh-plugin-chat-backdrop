@@ -1,0 +1,50 @@
+{
+  "name": "dsh-plugin-chat-backdrop",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness client plugin: a wallpaper behind the chat transcript with translucent surfaces, plus a Settings row to pick a local picture and drag a transparency slider.",
+  "license": "MIT",
+  "author": "Ternity",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  },
+  "files": [
+    "lib",
+    "dist",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "cordis",
+    "plugin",
+    "wallpaper",
+    "background",
+    "theme",
+    "ui"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ternity/dsh-plugin-chat-backdrop.git"
+  },
+  "homepage": "https://github.com/Ternity/dsh-plugin-chat-backdrop#readme",
+  "bugs": {
+    "url": "https://github.com/Ternity/dsh-plugin-chat-backdrop/issues"
+  }
+}
