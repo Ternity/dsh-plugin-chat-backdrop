@@ -415,20 +415,58 @@ function createBackdropStore({ storage, key, defaults }) {
         var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
       outline-offset: 1px;
     }
-    /* Scope selector: the same pill, sized for a native select. */
-    .dshx-cb-select {
-      height: 36px; padding: 0 34px 0 14px; border: none;
+    /* Scope picker: the same pill, but with our own popup instead of a native
+       <select>. A native select popup is drawn by the browser/OS and ignores
+       our theme tokens — in dark mode it came out white-on-white — so the list
+       is rendered in the page and coloured from the theme. */
+    .dshx-cb-select-btn {
+      display: inline-flex; align-items: center; gap: 8px;
+      height: 36px; padding: 0 12px 0 14px; border: none;
       border-radius: var(--dsw-radius-md);
       background: var(--dsw-alias-bg-module-platform);
       color: var(--dsw-alias-label-primary);
       font: inherit; font-size: 14px; line-height: 22px;
       max-width: 340px; cursor: pointer;
     }
-    .dshx-cb-select:hover { background: var(--dsw-alias-interactive-bg-hover); }
-    .dshx-cb-select:focus-visible {
+    .dshx-cb-select-btn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+    .dshx-cb-select-btn:focus-visible {
       outline: var(--dsw-focus-ring-width) solid
-        var(--dshx-cb-choose-focus-ring, var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)));
+        var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
       outline-offset: 1px;
+    }
+    .dshx-cb-select-label {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .dshx-cb-chevron { flex: none; width: 12px; height: 12px; display: block; }
+    .dshx-cb-popover {
+      position: fixed; z-index: 999; padding: 4px;
+      border: 0.5px solid var(--dsw-alias-border-l2);
+      border-radius: var(--dsw-radius-md);
+      background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-overlay));
+      color: var(--dsw-alias-label-primary);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      overflow: auto; overscroll-behavior: contain;
+    }
+    .dshx-cb-option {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      min-height: 32px; padding: 0 10px; border: none;
+      border-radius: var(--dsw-radius-sm);
+      background: transparent; color: var(--dsw-alias-label-primary);
+      font: inherit; font-size: 13px; line-height: 1.5;
+      text-align: left; white-space: nowrap; cursor: pointer;
+    }
+    .dshx-cb-option:hover { background: var(--dsw-alias-interactive-bg-hover); }
+    .dshx-cb-option.is-selected {
+      background: var(--dsw-alias-interactive-bg-active, var(--dsw-alias-interactive-bg-hover));
+    }
+    .dshx-cb-option:focus-visible {
+      outline: var(--dsw-focus-ring-width) solid
+        var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+      outline-offset: -2px;
+    }
+    .dshx-cb-option-check {
+      flex: none; width: 14px; font-size: 12px; line-height: 1;
+      color: var(--dsw-alias-brand-primary);
     }
     /* Quiet reset affordance, as in the host's settings fields (.reset). */
     .dshx-cb-reset {
@@ -1035,8 +1073,177 @@ function createBackdropStore({ storage, key, defaults }) {
    * component a `t`) and the standard `useWorkspaces` prop for the workspace
    * list. The write path is the same localStorage-backed store as the console.
    */
+  /**
+   * Scope picker: a token-coloured trigger plus an in-page listbox.
+   *
+   * A native <select> was the obvious first choice, but its popup is drawn by
+   * the browser/OS and does not take our theme tokens — in dark mode the list
+   * came out white with dark text. This renders the list inside the page and
+   * colours it from --dsw-alias-* instead, so it follows light/dark like every
+   * other control. Deliberately small: one trigger + one list; outside click and
+   * Escape close it, arrows move, Enter selects. The list is positioned fixed
+   * (and flips above the trigger when there is no room below) so the settings
+   * scroll container cannot clip it.
+   */
+  function createScopePicker(React) {
+    const h = React.createElement;
+
+    return function ScopePicker(props) {
+      const options = Array.isArray(props.options) ? props.options : [];
+      const value = props.value;
+      const label = props.label;
+      const [open, setOpen] = React.useState(false);
+      const [box, setBox] = React.useState(null);
+      const triggerRef = React.useRef(null);
+      const listRef = React.useRef(null);
+      const selected = options.find((option) => option.value === value);
+      const currentLabel = selected ? selected.label : String(value === undefined ? '' : value);
+
+      const close = (refocus) => {
+        setOpen(false);
+        if (refocus && triggerRef.current && typeof triggerRef.current.focus === 'function') {
+          triggerRef.current.focus();
+        }
+      };
+
+      const place = () => {
+        const trigger = triggerRef.current;
+        if (!trigger || typeof trigger.getBoundingClientRect !== 'function') return null;
+        const rect = trigger.getBoundingClientRect();
+        const spaceBelow = window.innerHeight - rect.bottom - 12;
+        const openUp = spaceBelow < 180;
+        return {
+          right: Math.max(8, window.innerWidth - rect.right),
+          width: Math.max(rect.width, 200),
+          maxHeight: Math.max(120, Math.min(300, openUp ? rect.top - 12 : spaceBelow)),
+          ...(openUp
+            ? { bottom: Math.max(8, window.innerHeight - rect.top + 4) }
+            : { top: rect.bottom + 4 }),
+        };
+      };
+
+      const toggle = () => {
+        if (open) {
+          close(false);
+          return;
+        }
+        setBox(place());
+        setOpen(true);
+      };
+
+      React.useEffect(() => {
+        if (!open) return undefined;
+        const onPointerDown = (event) => {
+          const target = event.target;
+          if (listRef.current && listRef.current.contains(target)) return;
+          if (triggerRef.current && triggerRef.current.contains(target)) return;
+          setOpen(false);
+        };
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation();
+            close(true);
+          }
+        };
+        const onViewportChange = () => setOpen(false);
+        document.addEventListener('pointerdown', onPointerDown, true);
+        document.addEventListener('keydown', onKeyDown, true);
+        window.addEventListener('scroll', onViewportChange, true);
+        window.addEventListener('resize', onViewportChange, true);
+        return () => {
+          document.removeEventListener('pointerdown', onPointerDown, true);
+          document.removeEventListener('keydown', onKeyDown, true);
+          window.removeEventListener('scroll', onViewportChange, true);
+          window.removeEventListener('resize', onViewportChange, true);
+        };
+      }, [open]);
+
+      // Move focus into the list when it opens so the keyboard path works.
+      React.useEffect(() => {
+        if (!open || !listRef.current) return;
+        const nodes = Array.from(listRef.current.querySelectorAll('[data-option]'));
+        const index = nodes.findIndex((node) => node.getAttribute('data-option') === value);
+        const focusTarget = nodes[index >= 0 ? index : 0];
+        if (focusTarget && typeof focusTarget.focus === 'function') focusTarget.focus();
+      }, [open]);
+
+      const onListKeyDown = (event) => {
+        if (!listRef.current) return;
+        const nodes = Array.from(listRef.current.querySelectorAll('[data-option]'));
+        if (nodes.length === 0) return;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          const current = nodes.indexOf(document.activeElement);
+          const step = event.key === 'ArrowDown' ? 1 : -1;
+          const next = (current + step + nodes.length) % nodes.length;
+          nodes[next].focus();
+        } else if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          nodes[event.key === 'Home' ? 0 : nodes.length - 1].focus();
+        }
+      };
+
+      return h(React.Fragment, null,
+        h('button', {
+          ref: triggerRef,
+          type: 'button',
+          className: 'dshx-cb-select-btn',
+          'aria-haspopup': 'listbox',
+          'aria-expanded': open,
+          title: label,
+          onClick: toggle,
+        },
+          h('span', { className: 'dshx-cb-select-label' }, currentLabel),
+          h('svg', {
+            className: 'dshx-cb-chevron',
+            viewBox: '0 0 16 16',
+            'aria-hidden': true,
+            focusable: 'false',
+          }, h('path', {
+            d: 'M4 6.5 8 10.5 12 6.5',
+            fill: 'none',
+            stroke: 'currentColor',
+            strokeWidth: 1.5,
+            strokeLinecap: 'round',
+            strokeLinejoin: 'round',
+          })),
+        ),
+        open && box
+          ? h('div', {
+              ref: listRef,
+              className: 'dshx-cb-popover',
+              role: 'listbox',
+              'aria-label': label,
+              style: {
+                right: `${box.right}px`,
+                width: `${box.width}px`,
+                maxHeight: `${box.maxHeight}px`,
+                ...(box.top !== undefined ? { top: `${box.top}px` } : { bottom: `${box.bottom}px` }),
+              },
+              onKeyDown: onListKeyDown,
+            }, options.map((option) => h('button', {
+              key: option.value,
+              type: 'button',
+              role: 'option',
+              'aria-selected': option.value === value,
+              'data-option': option.value,
+              className: `dshx-cb-option${option.value === value ? ' is-selected' : ''}`,
+              onClick: () => {
+                props.onChange(option.value);
+                close(true);
+              },
+            },
+              h('span', { className: 'dshx-cb-option-check', 'aria-hidden': true }, option.value === value ? '✓' : ''),
+              h('span', { className: 'dshx-cb-select-label' }, option.label),
+            )))
+          : null,
+      );
+    };
+  }
+
   function createSettingsRow(React) {
     const h = React.createElement;
+    const ScopePicker = createScopePicker(React);
 
     return function ChatBackdropSettings(props) {
       // `locale: NS` on the registration is what supplies `t`; the local
@@ -1149,15 +1356,15 @@ function createBackdropStore({ storage, key, defaults }) {
             h('div', { className: 'dshx-cb-desc' }, scopeDesc),
           ),
           h('div', { className: 'dshx-cb-actions' },
-            h('select', {
-              className: 'dshx-cb-select',
+            h(ScopePicker, {
+              options: scopeOptions,
               value: selected,
-              'aria-label': t('scopeTitle'),
-              onChange: (event) => {
+              label: t('scopeTitle'),
+              onChange: (value) => {
                 setError('');
-                setScope(event.target.value);
+                setScope(value);
               },
-            }, scopeOptions.map((option) => h('option', { key: option.value, value: option.value }, option.label))),
+            }),
           ),
         ),
 
