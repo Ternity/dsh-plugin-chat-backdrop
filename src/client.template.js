@@ -8,15 +8,14 @@
  * as `ds-harness-remote` use. `id` must equal the package name.
  *
  * What it does: paints a wallpaper behind the conversation column and makes the
- * surfaces on top of it translucent, so the photo shows through while the
- * theme's own colours keep the text readable.
+ * surfaces over it translucent, so the picture shows through while the theme's
+ * own colours keep the text readable. The picture and its opacity are set per
+ * SCOPE: one default for every workspace, plus optional per-workspace overrides.
  *
  * How, and why this way
  * ---------------------
- * A first version walked the DOM and rewrote `background-color` on every big
- * surface. Reading the shipped client CSS showed a far better seam: the areas
- * that matter each paint themselves from ONE theme token, and those tokens can
- * be rebound on a subtree:
+ * The surfaces that matter each paint themselves from ONE theme token, and those
+ * tokens can be rebound on a subtree:
  *
  *   conversation column  div:has(> [data-slot="conversation.content"])  (no bg of its own)
  *   user bubble          var(--dsw-specific-bubble)
@@ -27,7 +26,7 @@
  * it uses is a `data-*` attribute or a `data-slot` key rather than a generated
  * class name (DSH's CSS-module classes are content-hashed and change per build).
  *
- * The rebinding has two rules that must be respected, both learned the hard way:
+ * The two rebinding rules, both learned the hard way:
  *   1. never define a variable in terms of itself on the same element (that is a
  *      cycle and the whole declaration is dropped), so derived colours are
  *      computed on <body> under fresh `--dshx-cb-*` names and only then assigned
@@ -36,10 +35,22 @@
  *      presenter writes them as inline styles, so a stylesheet cannot win, and
  *      they are shared with modals, menus and tooltips.
  *
+ * Per-workspace switching needs three pieces, none of which touch the CSS above:
+ *   - src/backdrop-store.js (inlined below) holds the v2 storage shape, migrates
+ *     the old flat config into the default scope, and resolves a scope to the
+ *     effective values;
+ *   - a controller in the `conversation.composer.dock` slot reads the current
+ *     session's workspace through the standard `useWorkspaces` prop and applies
+ *     that scope, falling back to the default when there is no session yet;
+ *   - Settings → General gains an `Applies to` selector so a row can edit either
+ *     the default or one workspace without needing to know which is current.
+ *
  * Play with it from the renderer console (values persist to localStorage):
  *
- *   __DSH_CHAT_BACKDROP__.setConfig({ opacity: 0.85 })   // 0 = photo only
- *   __DSH_CHAT_BACKDROP__.config                          // current values
+ *   __DSH_CHAT_BACKDROP__.config                            // effective values now
+ *   __DSH_CHAT_BACKDROP__.setConfig({ opacity: 0.85 })      // edit the default
+ *   __DSH_CHAT_BACKDROP__.update('<workspaceId>', { opacity: 0.4 })  // override one
+ *   __DSH_CHAT_BACKDROP__.clearScope('<workspaceId>')       // drop that override
  *   __DSH_CHAT_BACKDROP__.reset()
  */
 
@@ -48,29 +59,31 @@
   const STYLE_ID = 'dsh-chat-backdrop-style';
   const STORAGE_KEY = 'dsh.chatBackdrop';
 
+  /* __BACKDROP_STORE__ */
+
   /** Inlined by tools/build-client.mjs from assets/backdrop.webp. */
   const IMAGE = '__BACKDROP_DATA_URL__';
 
   /**
-   * Everything the Settings → General row can change lives here, and every value
-   * can also be set from the renderer console through the
-   * `window.__DSH_CHAT_BACKDROP__` handle. Values are persisted to localStorage
-   * under `dsh.chatBackdrop`; a custom picture rides along as a data URL, which
-   * is why the row downscales a picked file before storing it.
+   * Everything a scope can change lives here, and every value can also be set
+   * from the renderer console through the `window.__DSH_CHAT_BACKDROP__` handle.
+   * Values persist to localStorage under `dsh.chatBackdrop`; a custom picture
+   * rides along as a data URL, which is why the row downscales a picked file
+   * before storing it.
    */
   const DEFAULTS = {
     /**
-     * How strongly the photo shows through: 0 = only the theme surface (no
-     * wallpaper), 1 = photo with no wash at all. The slider in Settings →
-     * General drives exactly this value; the veil painted over the photo is
+     * How strongly the picture shows through: 0 = only the theme surface (no
+     * wallpaper), 1 = picture with no wash at all. The slider in Settings →
+     * General drives exactly this value; the veil painted over the picture is
      * `1 - opacity`.
      */
     opacity: 0.62,
-    /** Custom picture picked in Settings → General, as a data URL. Empty = built-in. */
+    /** Picture picked in Settings → General, as a data URL. Empty = built-in. */
     imageUrl: '',
     /** Display name of the picked file (cosmetic only). */
     imageName: '',
-    /** Extra black wash over the photo, 0..1 (bright photos only). */
+    /** Extra black wash over the picture, 0..1 (bright pictures only). */
     imageDim: 0,
     imageSize: 'cover',
     imagePosition: 'center',
@@ -110,7 +123,7 @@
     }
 
     /* ── the wallpaper ──────────────────────────────────────────────────────
-       Three layers: themed veil, optional black wash, then the photo.
+       Three layers: themed veil, optional black wash, then the picture.
        The element is not a scroll container (the scroller lives inside it), so
        'scroll' behaves like a fixed backdrop without the fixed-attachment
        quirks under transformed/backdrop-filter ancestors. */
@@ -195,6 +208,21 @@
         var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
       outline-offset: 1px;
     }
+    /* Scope selector: the same pill, sized for a native select. */
+    .dshx-cb-select {
+      height: 36px; padding: 0 34px 0 14px; border: none;
+      border-radius: var(--dsw-radius-md);
+      background: var(--dsw-alias-bg-module-platform);
+      color: var(--dsw-alias-label-primary);
+      font: inherit; font-size: 14px; line-height: 22px;
+      max-width: 340px; cursor: pointer;
+    }
+    .dshx-cb-select:hover { background: var(--dsw-alias-interactive-bg-hover); }
+    .dshx-cb-select:focus-visible {
+      outline: var(--dsw-focus-ring-width) solid
+        var(--dshx-cb-choose-focus-ring, var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)));
+      outline-offset: 1px;
+    }
     /* Quiet reset affordance, as in the host's settings fields (.reset). */
     .dshx-cb-reset {
       border: none; background: none; padding: 0;
@@ -209,77 +237,75 @@
       color: var(--dsw-alias-label-tertiary);
       font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums;
     }
-    /* The swatch paints exactly the same three layers as the wallpaper, from the
-       same variables, so it tracks the slider without any extra plumbing. */
+    /* The swatch paints the same three layers as the wallpaper, but from its OWN
+       local variables so it can preview the selected scope even when that scope
+       is not the one currently applied. The surface mix is computed here (not
+       inherited from <body>) because a custom property that was already
+       substituted on <body> cannot be re-mixed further down. */
     .dshx-cb-preview {
       flex: 0 0 auto; width: 64px; height: 36px;
       border-radius: var(--dsw-radius-md);
       border: 0.5px solid var(--dsw-alias-border-l2);
+      --dshx-cb-local-surface: color-mix(
+        in srgb,
+        var(--dsw-alias-bg-base) var(--dshx-cb-local-veil, var(--dshx-cb-veil)),
+        transparent
+      );
       background-image:
-        linear-gradient(var(--dshx-cb-surface), var(--dshx-cb-surface)),
-        linear-gradient(rgba(0, 0, 0, var(--dshx-cb-dim)), rgba(0, 0, 0, var(--dshx-cb-dim))),
-        var(--dshx-cb-image);
+        linear-gradient(var(--dshx-cb-local-surface), var(--dshx-cb-local-surface)),
+        linear-gradient(
+          rgba(0, 0, 0, var(--dshx-cb-local-dim, var(--dshx-cb-dim))),
+          rgba(0, 0, 0, var(--dshx-cb-local-dim, var(--dshx-cb-dim)))
+        ),
+        var(--dshx-cb-local-image, var(--dshx-cb-image));
       background-size: auto, auto, cover;
       background-position: center, center, center;
       background-repeat: no-repeat, no-repeat, no-repeat;
     }
   `;
 
-  function readOverride() {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) || {} : {};
-    } catch {
-      return {};
+  // ── store, scope and application ─────────────────────────────────────────
+
+  /**
+   * Built on first use rather than at module evaluation: the client-plugin model
+   * keeps module bodies free of side effects, and reading localStorage is one.
+   * Nothing visible happens until apply() runs anyway.
+   */
+  let store = null;
+  function getStore() {
+    if (store === null) {
+      store = createBackdropStore({ storage: window.localStorage, key: STORAGE_KEY, defaults: DEFAULTS });
     }
+    return store;
   }
 
-  function currentConfig() {
-    const override = readOverride();
-    const config = { ...DEFAULTS };
-    for (const [key, value] of Object.entries(override)) {
-      if (key in DEFAULTS) config[key] = value;
-    }
-    return config;
-  }
+  /** The workspace of the visible main conversation, set by the controller. */
+  let activeWorkspaceId;
 
-  /** Returns false when the value could not be persisted (quota / private mode). */
-  function writeOverride(config) {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-      return true;
-    } catch {
-      // A picked picture can push the JSON past the origin quota: the look still
-      // applies for this page, and the settings row says so.
-      return false;
-    }
-  }
+  let persistTimer = 0;
+  let pendingPersist = false;
 
   /**
    * Deferred writes.
    *
-   * Dragging the opacity slider fires an input event per pixel, and the config
-   * carries the picked picture as a data URL, so persisting every tick would
-   * re-serialize hundreds of KB dozens of times a second. Continuous updates
-   * therefore apply to the DOM immediately and only the last one is written,
+   * Dragging the opacity slider fires an input event per pixel, and the stored
+   * value carries every picked picture as a data URL, so persisting every tick
+   * would re-serialize hundreds of KB dozens of times a second. Continuous
+   * updates apply to the DOM immediately and only the last one is written,
    * 350 ms after the drag stops (or on release / unmount).
    */
-  let persistTimer = 0;
-  let pendingConfig = null;
-
   function flushPersist() {
     if (persistTimer) {
       window.clearTimeout(persistTimer);
       persistTimer = 0;
     }
-    if (pendingConfig) {
-      api.persisted = writeOverride(pendingConfig);
-      pendingConfig = null;
-    }
+    if (!pendingPersist) return;
+    pendingPersist = false;
+    api.persisted = getStore().persist();
   }
 
-  function schedulePersist(config) {
-    pendingConfig = config;
+  function schedulePersist() {
+    pendingPersist = true;
     if (persistTimer) window.clearTimeout(persistTimer);
     persistTimer = window.setTimeout(() => {
       persistTimer = 0;
@@ -287,11 +313,24 @@
     }, 350);
   }
 
+  function commitPersist(options) {
+    if (options && options.persist === false) {
+      schedulePersist();
+      return;
+    }
+    if (persistTimer) {
+      window.clearTimeout(persistTimer);
+      persistTimer = 0;
+    }
+    pendingPersist = false;
+    api.persisted = getStore().persist();
+  }
+
   function applyConfig(config) {
     const root = document.documentElement;
     const set = (name, value) => root.style.setProperty(name, value);
     const percent = (value) => `${(Math.min(1, Math.max(0, Number(value) || 0)) * 100).toFixed(1)}%`;
-    // A picture picked in Settings → General wins over the built-in one.
+    // A picked picture wins over the built-in one.
     set('--dshx-cb-image', `url("${config.imageUrl || IMAGE}")`);
     set('--dshx-cb-size', String(config.imageSize));
     set('--dshx-cb-position', String(config.imagePosition));
@@ -317,6 +356,23 @@
     delete root.dataset.dshChatBackdropEmbedded;
   }
 
+  /** Push the active scope's effective values into the document. */
+  function applyEffective() {
+    applyConfig(getStore().effectiveFor(activeWorkspaceId));
+  }
+
+  function setActiveWorkspace(workspaceId) {
+    const next = workspaceId || undefined;
+    if (next === activeWorkspaceId) return;
+    activeWorkspaceId = next;
+    applyEffective();
+  }
+
+  function setActiveWorkspaceIfCurrent(workspaceId, next) {
+    if (activeWorkspaceId !== (workspaceId || undefined)) return;
+    setActiveWorkspace(next);
+  }
+
   function installStyle() {
     const style = document.createElement('style');
     style.id = STYLE_ID;
@@ -330,43 +386,79 @@
     return () => style.remove();
   }
 
-  /** Console handle: read, tweak and reset the look without a reload. */
+  /** Console handle: read and edit scopes without a reload. */
   const api = {
     active: true,
     /** false once a write failed (private mode, or an image past the quota). */
     persisted: true,
+
+    /** Effective values of the scope currently applied (the visible conversation). */
     get config() {
-      return currentConfig();
+      return getStore().effectiveFor(activeWorkspaceId);
     },
+    /** Workspace id driving the wallpaper right now, or DEFAULT_SCOPE. */
+    get scope() {
+      return activeWorkspaceId || DEFAULT_SCOPE;
+    },
+    /** Effective values of the default scope. */
+    get defaultConfig() {
+      return getStore().defaultConfig();
+    },
+
+    effectiveFor(scopeId) {
+      return getStore().effectiveFor(scopeId);
+    },
+    overrideOf(scopeId) {
+      return getStore().overrideOf(scopeId);
+    },
+    hasOverride(scopeId) {
+      return getStore().hasOverride(scopeId);
+    },
+    owns(scopeId, field) {
+      return getStore().owns(scopeId, field);
+    },
+    workspaces() {
+      return getStore().list();
+    },
+
     /**
-     * Apply a patch and persist it. `{ persist: false }` keeps the change live
+     * Patch one scope and persist it. `{ persist: false }` keeps the change live
      * but defers the write (coalesced) — used while a slider is being dragged.
      */
-    setConfig(patch, options) {
-      const next = { ...currentConfig(), ...patch };
-      if (options && options.persist === false) schedulePersist(next);
-      else {
-        pendingConfig = null;
-        api.persisted = writeOverride(next);
-      }
-      applyConfig(next);
-      return next;
+    update(scopeId, patch, options) {
+      const scope = scopeId || DEFAULT_SCOPE;
+      getStore().write(scope, patch);
+      commitPersist(options);
+      return getStore().effectiveFor(scope);
     },
+
+    /** Back-compat for the console handle: `setConfig` edits the default scope. */
+    setConfig(patch, options) {
+      return api.update(DEFAULT_SCOPE, patch, options);
+    },
+
+    /** Drop one workspace override so it inherits the default again. */
+    clearScope(scopeId) {
+      getStore().clear(scopeId);
+      commitPersist();
+      return getStore().effectiveFor(scopeId);
+    },
+
+    /** Wipe everything back to factory defaults. */
     reset() {
       if (persistTimer) {
         window.clearTimeout(persistTimer);
         persistTimer = 0;
       }
-      pendingConfig = null;
+      pendingPersist = false;
       try {
         window.localStorage.removeItem(STORAGE_KEY);
-        api.persisted = true;
       } catch {
-        api.persisted = false;
+        /* ignore */
       }
-      const next = currentConfig();
-      applyConfig(next);
-      return next;
+      getStore().reset();
+      api.persisted = true;
+      return getStore().effectiveFor(activeWorkspaceId);
     },
   };
 
@@ -375,8 +467,10 @@
     // the plugin is disabled, reloaded (HMR) or removed.
     ctx.effect(() => installStyle(), `${MODULE_ID}: backdrop stylesheet`);
     ctx.effect(() => {
-      applyConfig(currentConfig());
+      const unsubscribe = getStore().subscribe(() => applyEffective());
+      applyEffective();
       return () => {
+        unsubscribe();
         flushPersist();
         clearConfig();
       };
@@ -387,39 +481,82 @@
     }, `${MODULE_ID}: console handle`);
   }
 
+  // ── workspace controller ─────────────────────────────────────────────────
+
   /**
-   * Zero-space occupant of an existing list slot, rendering nothing.
+   * True when this slot instance belongs to the visible main conversation.
    *
-   * It exists so the browser half is observable from outside the page: the
-   * official client-plugin verification is "the live Client slot", i.e.
-   *
-   *   cordis_inspect_query platform=client provider=Slots method=listSubTree
-   *                      input={"root":"conversation.composer.dock"}
-   *
-   * will list an occupant with id `chat-backdrop` exactly when this bundle
-   * materialized in the running page. The real user-facing control lives in
-   * Settings → General; this seat is purely the observable side of that.
+   * `conversation.composer.dock` is session-scoped, so the right sidebar's
+   * embedded subagent conversations mount it too; only the main one may decide
+   * the wallpaper. `[data-conversation-content]` with `data-conversation-session`
+   * is the host's own contract for "which session is rendered here", and the
+   * right column is marked by `[data-rightbar-col]`.
    */
-  function BackdropProbe() {
-    return null;
+  function isMainConversation(sessionId) {
+    try {
+      const hosts = Array.from(document.querySelectorAll('[data-conversation-content]'));
+      if (hosts.length === 0) return true;
+      const main = hosts.find((element) => !element.closest('[data-rightbar-col]'));
+      if (!main) return true;
+      const current = main.getAttribute('data-conversation-session');
+      return current === null || current === undefined || current === sessionId;
+    } catch {
+      return true;
+    }
   }
 
-  const PROBE_SLOT = 'conversation.composer.dock';
+  function createController(React) {
+    return function BackdropController(props) {
+      const sessionId = props ? props.sessionId : undefined;
+      const useWorkspaces = props && typeof props.useWorkspaces === 'function' ? props.useWorkspaces : null;
+      // The standard prop is a selector hook; the selector must return a stable
+      // value (a workspace id), never a fresh object, or React would re-render
+      // on every store publication.
+      const workspaceId = useWorkspaces
+        ? useWorkspaces((snapshot) => {
+            if (!snapshot || !Array.isArray(snapshot.items) || sessionId === undefined) return undefined;
+            const owner = snapshot.items.find(
+              (item) => item && Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId),
+            );
+            return owner ? owner.workspaceId : undefined;
+          })
+        : undefined;
+
+      React.useEffect(() => {
+        if (!isMainConversation(sessionId)) return undefined;
+        setActiveWorkspace(workspaceId);
+        return () => {
+          // A dep change mounts the next effect right after this cleanup; the
+          // guard keeps an unmounting embedded instance from clearing the main
+          // conversation's scope.
+          setActiveWorkspaceIfCurrent(workspaceId, undefined);
+        };
+      }, [workspaceId]);
+
+      return null;
+    };
+  }
+
+  // ── self-check probe ────────────────────────────────────────────────────
 
   /**
-   * One-line report on what the wallpaper actually resolved to in this page,
-   * encoded into the probe's slot id so it can be read from OUTSIDE the page:
+   * Zero-space occupant whose slot id carries a one-line self-check, readable
+   * from outside the page:
    *
-   *   chat-backdrop-diag-s<a>a<b>i<c>v<d>h<e>c<f>o<g>u<h>-<theme>-<has>
+   *   chat-backdrop-diag-s<a>a<b>i<c>v<d>h<e>c<f>o<g>u<h>w<i>b<j>s<k>-g0/1k<hash>-<theme>-<has>
    *
    *   s  the injected <style data-plugin="…"> tag is in the document
    *   a  <html data-dsh-chat-backdrop="1"> is set
    *   i  --dshx-cb-image resolves to something on <html>
    *   v  --dshx-cb-surface resolves to something on <body>
-   *   h  [data-conversation-content] computes a background-image with the photo
-   *   c  composer card alpha x100 (0-99 = translucent, 100 = opaque, x = no card)
-   *   o  configured opacity x100 (what the Settings slider writes)
-   *   u  1 when a picture picked in Settings → General is in use
+   *   h  the main [data-conversation-content] computes a background-image with a picture
+   *   c  composer card alpha x100 (0-99 translucent, 100 opaque, x no card)
+   *   o  effective opacity x100 for the active scope
+   *   u  1 when a custom picture (not the built-in one) is in use
+   *   w  canvas can encode WebP        b  createImageBitmap exists        s  localStorage writable
+   *   g  1 when the active workspace has its own override
+   *   k  six hex chars hashing the active workspace id, or d for the default scope
+   *   t  1/0/- : runtime override-plumbing self-test (passed / failed / no workspace)
    *   theme: dark | light   has: whether this engine supports :has()
    *
    * Read it with:
@@ -441,6 +578,51 @@
     return 1; // rgb(...) / named colour: opaque
   }
 
+  /** Six hex chars of an FNV-1a hash, so the slot id stays short and safe. */
+  function hash6(value) {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < value.length; index += 1) {
+      hash ^= value.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    return hash.toString(16).padStart(8, '0').slice(0, 6);
+  }
+
+  /**
+   * Runtime proof that the override plumbing works, reported as one diag bit.
+   *
+   * It writes a synthetic override for the active workspace, checks that the
+   * effective values pick it up, then deletes it again — all synchronously, so
+   * nothing is painted in between and localStorage is never touched (store.write
+   * only mutates the cache; persisting is a separate call). Skipped when the
+   * user already has a real override on this workspace, because the synthetic
+   * patch must not disturb it.
+   */
+  function selfTestOverrides() {
+    const scope = activeWorkspaceId;
+    if (!scope) return '-';
+    if (getStore().hasOverride(scope)) return '-';
+    let result = '0';
+    try {
+      getStore().write(scope, { opacity: 0.123 });
+      result = getStore().effectiveFor(scope).opacity === 0.123 ? '1' : '0';
+    } catch {
+      result = '0';
+    } finally {
+      try {
+        const override = getStore().overrideOf(scope);
+        const onlySynthetic = override
+          && Object.keys(override).length === 1
+          && override.opacity === 0.123;
+        if (onlySynthetic) getStore().write(scope, { opacity: undefined });
+      } catch {
+        /* the synthetic patch is best-effort; a leftover override only ever
+           equals the user's own opacity scale, never a picture */
+      }
+    }
+    return result;
+  }
+
   function diagnose() {
     const globalCss = window.CSS;
     const supportsHas = Boolean(globalCss) && typeof globalCss.supports === 'function'
@@ -452,7 +634,9 @@
     const imageVar = bit(getComputedStyle(document.documentElement).getPropertyValue('--dshx-cb-image').trim());
     const surfaceVar = bit(document.body
       && getComputedStyle(document.body).getPropertyValue('--dshx-cb-surface').trim());
-    const host = document.querySelector('[data-conversation-content]');
+
+    const contentHosts = Array.from(document.querySelectorAll('[data-conversation-content]'));
+    const host = contentHosts.find((element) => !element.closest('[data-rightbar-col]')) || contentHosts[0];
     let painted = false;
     if (host) {
       try {
@@ -470,9 +654,13 @@
         cardAlpha = 'x';
       }
     }
-    const config = currentConfig();
-    const opacity = String(Math.round(Number(config.opacity) * 100));
-    const custom = bit(Boolean(config.imageUrl));
+
+    const applied = getStore().effectiveFor(activeWorkspaceId);
+    const opacity = String(Math.round(Number(applied.opacity) * 100));
+    const custom = bit(Boolean(applied.imageUrl));
+    const overridden = bit(getStore().hasOverride(activeWorkspaceId));
+    const scopeKey = activeWorkspaceId ? hash6(String(activeWorkspaceId)) : 'd';
+
     // Capabilities the Settings row depends on: WebP encoding from a canvas,
     // createImageBitmap for decoding a picked File, and a writable localStorage.
     const canWebp = (() => {
@@ -492,22 +680,26 @@
         return false;
       }
     })();
+
     return `s${styleTag}a${attr}i${imageVar}v${surfaceVar}`
       + `h${bit(painted)}c${cardAlpha}o${opacity}u${custom}`
       + `w${bit(canWebp)}b${bit(canBitmap)}s${bit(canStore)}`
+      + `-g${overridden}k${scopeKey}t${selfTestOverrides()}`
       + `-${theme}-${supportsHas ? 'has' : 'nohas'}`;
   }
 
-  function registerProbes(ctx) {
-    const register = (id) => ctx.slots.inject(PROBE_SLOT, () => ctx.slots.register(
+  function registerProbes(ctx, React) {
+    const register = (id, component) => ctx.slots.inject(PROBE_SLOT, () => ctx.slots.register(
       { name: PROBE_SLOT, id, order: 100 },
-      BackdropProbe,
+      component,
     ));
-    register('chat-backdrop');
+    // The controller lives in this seat: it is session-scoped, its standard
+    // props include sessionId/useWorkspaces, and it renders nothing.
+    register('chat-backdrop', createController(React));
     ctx.effect(() => {
       let dispose;
       const timer = window.setTimeout(() => {
-        dispose = register(`chat-backdrop-diag-${diagnose()}`);
+        dispose = register(`chat-backdrop-diag-${diagnose()}`, function BackdropProbe() { return null; });
       }, 3000);
       return () => {
         window.clearTimeout(timer);
@@ -516,45 +708,54 @@
     }, `${MODULE_ID}: diagnostics probe`);
   }
 
-  /* ── the Settings → General rows ─────────────────────────────────────────────
-   * `settings.general.item` is a "row draws its own internals" seat: the owner
-   * projects no label and passes no props of its own (the catalog says so in as
-   * many words), and copy / current value / write path belong to us.
-   *
-   * Two host mechanisms are used exactly as the shipped rows use them:
-   *   - `locale: NS` on the registration, so the renderer hands the component a
-   *     `t` bound to this plugin's dictionary (ui-conversation's Composer Enter
-   *     row does the same), and
-   *   - `inject: () => ({...})` for owner-supplied props — unused here, since the
-   *     plugin owns its value.
-   * The write path is `api.setConfig`, i.e. the same localStorage-backed config
-   * the console handle uses.
-   */
+  const PROBE_SLOT = 'conversation.composer.dock';
+
+  // ── copy ────────────────────────────────────────────────────────────────
 
   const LANG = String(document.documentElement.lang || navigator.language || 'zh').toLowerCase();
   const DICT = {
     zh: {
+      scopeTitle: '作用范围',
+      scopeDefaultOption: '默认（所有工作区）',
+      scopeDescDefault: '未单独设置的工作区都使用这套背景',
+      scopeDescInherit: '此工作区尚未单独设置（继承默认）',
+      scopeDescOverride: '此工作区已单独设置',
+      currentSuffix: '（当前）',
       imageTitle: '对话背景图',
-      imageDescBuiltin: '内置图：雾中图书馆 · 可选一张你自己的图片',
+      imageDescBuiltin: '内置图',
       imageDescCustom: '本地图片：',
+      imageUntitled: '自定义图片',
+      inheritPrefix: '继承默认 · ',
       pick: '选择图片…',
       picking: '读取中…',
       resetImage: '恢复默认图',
+      useDefaultImage: '用默认图',
       opacityTitle: '背景图透明度',
-      opacityDesc: '0% 只有主题底色，100% 图片最清楚',
+      opacityDesc: '0% 只有主题底色（等于关闭），100% 图片最清楚',
+      followDefault: '跟随默认',
       resetAll: '全部恢复默认',
       failed: '这张图片读不出来',
       quota: '图片太大，只能在本次会话生效（未能持久化）',
     },
     en: {
+      scopeTitle: 'Applies to',
+      scopeDefaultOption: 'Default (all workspaces)',
+      scopeDescDefault: 'Workspaces without their own setting use this backdrop',
+      scopeDescInherit: 'This workspace inherits the default',
+      scopeDescOverride: 'This workspace has its own setting',
+      currentSuffix: ' (current)',
       imageTitle: 'Chat backdrop image',
-      imageDescBuiltin: 'Built-in: foggy library · or pick a picture of your own',
+      imageDescBuiltin: 'Built-in picture',
       imageDescCustom: 'Local picture: ',
+      imageUntitled: 'custom picture',
+      inheritPrefix: 'inherited · ',
       pick: 'Choose image…',
       picking: 'Reading…',
       resetImage: 'Use built-in',
+      useDefaultImage: 'Use default picture',
       opacityTitle: 'Backdrop opacity',
-      opacityDesc: '0% keeps only the theme colour, 100% shows the picture fully',
+      opacityDesc: '0% keeps only the theme colour (same as off), 100% shows the picture fully',
+      followDefault: 'Follow default',
       resetAll: 'Reset all',
       failed: 'This picture could not be read',
       quota: 'Picture too large to persist — applies to this session only',
@@ -562,6 +763,8 @@
   };
   /** Used until (or in case) the locale service hands the component a `t`. */
   const FALLBACK_COPY = LANG.startsWith('zh') ? DICT.zh : DICT.en;
+
+  // ── picked-file handling ────────────────────────────────────────────────
 
   /** Decode a picked File without needing a blob: URL (CSP-proof). */
   async function decodeImage(file) {
@@ -615,6 +818,16 @@
     }
   }
 
+  // ── the Settings → General rows ─────────────────────────────────────────
+
+  /**
+   * `settings.general.item` is a "row draws its own internals" seat: the owner
+   * projects no label and passes no props of its own, and copy / current value /
+   * write path belong to us. Two host mechanisms are used exactly as the shipped
+   * rows use them: `locale: NS` on the registration (the renderer hands the
+   * component a `t`) and the standard `useWorkspaces` prop for the workspace
+   * list. The write path is the same localStorage-backed store as the console.
+   */
   function createSettingsRow(React) {
     const h = React.createElement;
 
@@ -625,19 +838,39 @@
       const t = props && typeof props.t === 'function'
         ? props.t
         : (key) => FALLBACK_COPY[key] || key;
-      const [config, setLocal] = React.useState(() => api.config);
+      const useWorkspaces = props && typeof props.useWorkspaces === 'function' ? props.useWorkspaces : null;
+      const items = useWorkspaces
+        ? useWorkspaces((snapshot) => (snapshot && Array.isArray(snapshot.items) ? snapshot.items : undefined))
+        : undefined;
+      const workspaces = items || [];
+
+      const [scope, setScope] = React.useState(DEFAULT_SCOPE);
       const [busy, setBusy] = React.useState(false);
       const [error, setError] = React.useState('');
+      const [, bump] = React.useState(0);
       const fileRef = React.useRef(null);
+      const refresh = () => bump((value) => value + 1);
 
-      const patch = (next) => setLocal(api.setConfig(next));
-      // Slider drags: live on every tick, written once the drag settles.
-      const preview = (next) => setLocal(api.setConfig(next, { persist: false }));
+      // A selected workspace can disappear (deleted) between renders: fall back.
+      const scopeIsLive = scope === DEFAULT_SCOPE
+        || workspaces.some((item) => item && item.workspaceId === scope);
+      const selected = scopeIsLive ? scope : DEFAULT_SCOPE;
+
+      const config = getStore().effectiveFor(selected);
+      const overridden = getStore().hasOverride(selected);
+      const ownsImage = getStore().owns(selected, 'imageUrl') || getStore().owns(selected, 'imageName');
+      const percent = Math.round(Number(config.opacity) * 100);
+
+      const write = (patch, options) => {
+        api.update(selected, patch, options);
+        refresh();
+      };
+      const preview = (patch) => write(patch, { persist: false });
       const commitOpacity = (event) => {
         const raw = event && event.target && 'value' in event.target
           ? Number(event.target.value)
-          : Math.round(Number(config.opacity) * 100);
-        patch({ opacity: raw / 100 });
+          : percent;
+        write({ opacity: raw / 100 });
       };
 
       const onPick = async (event) => {
@@ -648,7 +881,7 @@
         setError('');
         try {
           const imageUrl = await encodeImage(file);
-          patch({ imageUrl, imageName: file.name });
+          write({ imageUrl, imageName: file.name });
         } catch {
           setError(t('failed'));
         } finally {
@@ -656,25 +889,78 @@
         }
       };
 
-      const hint = error
-        ? error
-        : config.imageUrl
-          ? `${t('imageDescCustom')}${config.imageName || 'image'}`
-          : t('imageDescBuiltin');
+      const resetImage = () => {
+        setError('');
+        if (selected === DEFAULT_SCOPE) write({ imageUrl: '', imageName: '' });
+        else write({ imageUrl: undefined, imageName: undefined });
+      };
 
-      const percent = Math.round(Number(config.opacity) * 100);
+      const followDefault = () => {
+        setError('');
+        api.clearScope(selected);
+        refresh();
+      };
 
-      // Two host-shaped rows in one occupant: each draws the host's own row
+      const resetAll = () => {
+        setError('');
+        api.reset();
+        refresh();
+      };
+
+      const scopeOptions = [{ value: DEFAULT_SCOPE, label: t('scopeDefaultOption') }];
+      for (const item of workspaces) {
+        if (!item || !item.workspaceId) continue;
+        const base = item.title || item.path || item.workspaceId;
+        const current = api.scope === item.workspaceId ? t('currentSuffix') : '';
+        scopeOptions.push({ value: item.workspaceId, label: `${base}${current}` });
+      }
+
+      const inherited = selected !== DEFAULT_SCOPE && !ownsImage;
+      const imageSource = config.imageUrl
+        ? `${inherited ? t('inheritPrefix') : ''}${t('imageDescCustom')}${config.imageName || t('imageUntitled')}`
+        : `${inherited ? t('inheritPrefix') : ''}${t('imageDescBuiltin')}`;
+      const scopeDesc = selected === DEFAULT_SCOPE
+        ? t('scopeDescDefault')
+        : (overridden ? t('scopeDescOverride') : t('scopeDescInherit'));
+      const canResetImage = selected === DEFAULT_SCOPE ? Boolean(config.imageUrl) : ownsImage;
+
+      // The swatch previews the SELECTED scope, not the applied one, so it is
+      // driven by local custom properties (see .dshx-cb-preview).
+      const swatchStyle = {
+        '--dshx-cb-local-veil': `${((1 - Math.min(1, Math.max(0, Number(config.opacity) || 0))) * 100).toFixed(1)}%`,
+        '--dshx-cb-local-dim': String(Math.min(1, Math.max(0, Number(config.imageDim) || 0))),
+        '--dshx-cb-local-image': `url("${config.imageUrl || IMAGE}")`,
+      };
+
+      // Three host-shaped rows in one occupant: each draws the host's own row
       // chrome (padding, bottom hairline, title/desc pair), the control area sits
       // on the right.
       return h(React.Fragment, null,
         h('div', { className: 'dshx-cb-row' },
           h('div', { className: 'dshx-cb-text' },
-            h('div', { className: 'dshx-cb-title' }, t('imageTitle')),
-            h('div', { className: 'dshx-cb-desc', title: hint }, hint),
+            h('div', { className: 'dshx-cb-title' }, t('scopeTitle')),
+            h('div', { className: 'dshx-cb-desc' }, scopeDesc),
           ),
           h('div', { className: 'dshx-cb-actions' },
-            h('span', { className: 'dshx-cb-preview', 'aria-hidden': true }),
+            h('select', {
+              className: 'dshx-cb-select',
+              value: selected,
+              'aria-label': t('scopeTitle'),
+              onChange: (event) => {
+                setError('');
+                setScope(event.target.value);
+              },
+            }, scopeOptions.map((option) => h('option', { key: option.value, value: option.value }, option.label))),
+          ),
+        ),
+
+        h('div', { className: 'dshx-cb-row' },
+          h('div', { className: 'dshx-cb-text' },
+            h('div', { className: 'dshx-cb-title' }, t('imageTitle')),
+            h('div', { className: 'dshx-cb-desc', title: imageSource }, error || imageSource),
+          ),
+          h('div', { className: 'dshx-cb-actions' },
+            h('span', { className: 'dshx-cb-preview', 'aria-hidden': true, style: swatchStyle }),
             h('button', {
               type: 'button',
               className: 'dshx-cb-choose',
@@ -684,15 +970,17 @@
             h('button', {
               type: 'button',
               className: 'dshx-cb-reset',
-              onClick: () => { setError(''); patch({ imageUrl: '', imageName: '' }); },
-              disabled: !config.imageUrl || busy,
-            }, t('resetImage')),
+              onClick: resetImage,
+              disabled: !canResetImage || busy,
+            }, selected === DEFAULT_SCOPE ? t('resetImage') : t('useDefaultImage')),
           ),
         ),
+
         h('div', { className: 'dshx-cb-row' },
           h('div', { className: 'dshx-cb-text' },
             h('div', { className: 'dshx-cb-title' }, t('opacityTitle')),
-            h('div', { className: 'dshx-cb-desc' }, api.persisted === false ? t('quota') : t('opacityDesc')),
+            h('div', { className: 'dshx-cb-desc' },
+              api.persisted === false ? t('quota') : t('opacityDesc')),
           ),
           h('div', { className: 'dshx-cb-actions' },
             h('input', {
@@ -712,10 +1000,11 @@
             h('button', {
               type: 'button',
               className: 'dshx-cb-reset',
-              onClick: () => { setError(''); setLocal(api.reset()); },
-            }, t('resetAll')),
+              onClick: selected === DEFAULT_SCOPE ? resetAll : followDefault,
+            }, selected === DEFAULT_SCOPE ? t('resetAll') : t('followDefault')),
           ),
         ),
+
         h('input', {
           ref: fileRef,
           type: 'file',
@@ -737,12 +1026,12 @@
     factory: (require) => {
       const module = { exports: {} };
       const React = require('react');
-      // `slots` renders the row, `locale` carries the row's copy; the wallpaper
+      // `slots` renders the rows, `locale` carries their copy; the wallpaper
       // itself is pure DOM + CSS, and React comes from the browser module table.
       const inject = ['slots', 'locale'];
       function apply(ctx) {
         start(ctx);
-        registerProbes(ctx);
+        registerProbes(ctx, React);
         ctx.effect(
           () => ctx.locale.register(LOCALE_NS, DICT),
           `${MODULE_ID}: dictionaries`,

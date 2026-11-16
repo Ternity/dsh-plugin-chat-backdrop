@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "..", "assets", "backdrop.webp")
-OUT = os.path.join(HERE, "..", "docs", "design-preview.png")
+OUT = os.path.join(HERE, "..", "docs", "design-preview.jpg")
 
 SURFACE = (0x15, 0x15, 0x17)   # dark theme --dsw-alias-bg-base
 BUBBLE = (0x2C, 0x2C, 0x2E)    # --dsw-specific-bubble (dark)
@@ -104,7 +104,7 @@ def main() -> int:
         canvas.paste(tile, (x, gap))
         x += tile.width + gap
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
-    canvas.save(OUT)
+    canvas.save(OUT, quality=88, optimize=True)
     print(f"{OUT}  {canvas.width}x{canvas.height}  {os.path.getsize(OUT) / 1024:.0f} KB")
     return 0
 

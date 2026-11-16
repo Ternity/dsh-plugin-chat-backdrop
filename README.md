@@ -1,22 +1,25 @@
 # dsh-plugin-chat-backdrop
 
 > A DeepSeek Harness client plugin: paints a wallpaper behind the chat transcript, turns the
-> surfaces on top of it into translucent glass, and adds a **Settings → General** row to pick a
-> local picture and drag a transparency slider. Pure client-side (CSS injection + theme-token
-> rebinding), no host code, no build step at install time.
+> surfaces on top of it into translucent glass, and adds **Settings → General** rows to pick a
+> local picture and drag a transparency slider — with one default for every workspace and
+> optional per-workspace (per-project) overrides.
+> Pure client-side (CSS injection + theme-token rebinding), no host code, no build step at install time.
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的**对话区**加一张背景图，
-并把盖在它上面的表面做成半透明玻璃；**设置 → 通用**里有一行可以选本地图片、拖滑杆调透明度。
+并把盖在它上面的表面做成半透明玻璃；**设置 → 通用**里可以选本地图片、拖滑杆调透明度，
+并且**按工作区（项目）分别设置**：没单独设置过的项目用默认背景。
 
 - **纯客户端插件**：只往页面注入一张 `<style>` + 改写主题 token，宿主侧是空壳
 - **不碰哈希类名**：只用 `data-*` / `data-slot` 锚点 + 主题 token，UI 改版不会静默失效
+- **默认 + 工作区覆盖**：默认背景全工作区生效；某个项目想用别的图/透明度就单独覆盖，删掉覆盖即恢复默认
 - **可选图、可调透明**：设置页选本地任意图片（自动降采样到长边 2400px 再存），滑杆 0–100%
 - **跟随主题**：亮/暗模式用宿主自己的 token，菜单、模态框、Tooltip 保留官方材质
 - **装好即用**：仓库里带了构建好的 `dist/client.js`，目标机器不需要 Node / pnpm 构建
 
-![设计预览（离线模拟，不是运行截图）](docs/design-preview.png)
+![设计预览（离线模拟，不是运行截图）](docs/design-preview.jpg)
 
-> 预览由 `tools/preview-crop.py` 对内置示例图做 `cover` 裁剪 + 主题底色蒙版 + 假 UI 合成，
+> 预览由 `tools/preview-crop.py` 对内置图做 `cover` 裁剪 + 主题底色蒙版 + 假 UI 合成，
 > 用来比较蒙版浓度与裁剪位置，**不代表运行中的真实画面**。
 
 ## 安装（换一台机器）
@@ -51,7 +54,7 @@ dsh plugin --profile <profile-id> add github:Ternity/dsh-plugin-chat-backdrop
 GitHub 页面 → **Code ▾ → Download ZIP** → 解压 → 插件页 **添加插件** 填解压目录的**绝对路径**
 （本地路径是官方支持的安装来源，管理器会直接读它的 `package.json`）。
 
-装好后：**设置 → 通用**，在「外观 / 字体大小 / 会话视图」下面应该出现本插件的两行。
+装好后：**设置 → 通用**，在「外观 / 字体大小 / 会话视图」下面应该出现本插件的三行。
 如果样式没出现而插件页里显示已启用，重启一次 App（新 bundle 有时需要重启宿主进程）。
 
 > 要求：DSH 0.2.x（客户端插件 `dsh.client` 契约）。实测于 0.2.0-rc.2 / 0.2.1。
@@ -92,14 +95,26 @@ git+ssh://git@github.com/Ternity/dsh-plugin-chat-backdrop.git
 
 ## 日常使用：设置 → 通用
 
+共三行，前两行的操作都作用于**「作用范围」里选中的那个范围**：
+
 | 行 / 控件 | 作用 |
 |---|---|
-| **对话背景图** 行 | 描述行显示当前用的是内置图还是哪个本地文件；右侧是缩略预览 + **选择图片…** + **恢复默认图** |
-| **选择图片…** | 打开系统文件对话框（`accept="image/*"`），选本地任意图片。渲染端用 `createImageBitmap` 解码 → canvas 缩到长边 ≤ 2400px → WebP q0.82（不支持则 JPEG）→ data URL |
-| **缩略预览** | 64×36 小色块，用**和壁纸完全相同的三层**（主题蒙版 + 压暗 + 图片）由同名变量绘制，拖滑杆时同步变化 |
-| **背景图透明度** 行 | 滑杆：0% = 只有主题底色（看不到图）；100% = 图片最清楚。写入 `opacity`，蒙版 = `1 - opacity`；右侧是百分比读数与 **全部恢复默认** |
+| **作用范围** | 下拉选 `默认（所有工作区）` 或某个工作区（标题 + 当前会话所在工作区带「（当前）」）。描述行显示该范围的状态：默认生效 / 已单独设置 / 继承默认 |
+| **对话背景图** | 描述行显示当前用的是内置图还是哪个本地文件；右侧是缩略预览 + **选择图片…** + **恢复默认图**（工作区范围下按钮变成 **用默认图**，即删掉该工作区自己的图片、继承默认） |
+| **选择图片…** | 打开系统文件对话框（`accept="image/*"`）。渲染端用 `createImageBitmap` 解码 → canvas 缩到长边 ≤ 2400px → WebP q0.82（不支持则 JPEG）→ data URL |
+| **缩略预览** | 64×36 小色块，用**和壁纸完全相同的三层**（主题蒙版 + 压暗 + 图片）绘制，并且预览的是**选中的范围**（不是当前生效的那个），拖滑杆时同步变化 |
+| **背景图透明度** | 滑杆：0% = 只有主题底色（等于关闭背景），100% = 图片最清楚。写入 `opacity`，蒙版 = `1 - opacity`；右侧是百分比读数与 **全部恢复默认**（默认范围）／**跟随默认**（工作区范围，等于删掉该工作区的覆盖） |
 
-选择与拖动**即时生效、无需重启**，持久化在渲染端 `localStorage`（键 `dsh.chatBackdrop`）。
+**语义**
+
+- 未单独设置的工作区 → 用**默认**背景；默认背景本身就在这个界面里设置（选「默认（所有工作区）」）。
+- 某个工作区只有**你动过的字段**才算覆盖：比如只拖了透明度，图片仍继承默认。
+- 工作区覆盖按 `workspaceId` 存：工作区改名不受影响；删除工作区只会留下一条不可见的孤儿记录（无害）。
+- 选择与拖动**即时生效、无需重启**，持久化在渲染端 `localStorage`（键 `dsh.chatBackdrop`）。
+
+**从 0.1.x 升级**：旧版是单一全局配置。升级后它会**自动迁移成「默认」范围**，你当前用的图与
+透明度原样保留（日志里自检位 `u1` + 原透明度即为证），不需要重新选图。
+
 自选图先缩到长边 2400px 再编码：`localStorage` 每个 origin 约 5 MB、data URL 还有约 1.37 倍膨胀，
 所以超大原图会先被压到几百 KB；万一写不进去（配额 / 隐私模式），那一行会提示
 「图片太大，只能在本次会话生效」，画面照常生效但不持久化。
@@ -138,16 +153,34 @@ DSH 的聊天区里每个关键表面都只从**一个主题 token** 取色，�
 14px/400 标题、12px 三级色描述、36px 圆角胶囊控件），类名全部换成 `dshx-cb-*` 前缀，
 颜色只用 `--dsw-alias-*` token；文案走宿主 locale（注册时带 `locale` 命名空间）。
 
+### 按工作区切换是怎么做到的
+
+三层，彼此独立：
+
+1. **存储与解析**（`src/backdrop-store.js`，无 DOM，可单测）：localStorage 里是
+   `{ v: 2, default: {...}, workspaces: { [workspaceId]: {...} } }`；旧版扁平配置在读取时迁移成
+   `default`。某范围的生效值 = `DEFAULTS + default + workspaces[id]`（逐字段覆盖）。
+2. **谁在决定当前范围**（控制器，注册在 `conversation.composer.dock`）：这个槽位是 session 作用域，
+   标准 props 里有 `sessionId` 与 `useWorkspaces`。控制器用
+   `useWorkspaces(s => s.items.find(w => w.sessionIds.includes(sessionId))?.workspaceId)` 拿到当前会话的
+   工作区，切换会话/工作区时重新应用；没有会话（空白会话）时用默认。
+   - 该槽位在内嵌 subagent 会话里也会挂载，所以控制器先判断自己是不是**主对话**
+     （`[data-conversation-content]` 上宿主的 `data-conversation-session` + `[data-rightbar-col]` 排除右栏），
+     内嵌实例不会覆盖主对话的选择；
+   - 右栏内嵌会话本身也已被 CSS 排除，不铺图。
+3. **编辑哪个范围**（设置行）：`useWorkspaces` 也能在 `settings.general.item` 里用，所以下拉能列出
+   所有工作区，**不需要知道"当前是哪个"**；选中哪个范围就编辑哪个范围。
+
 ## 自定义
 
-**换内置图**（所有人 / 所有会话默认看到的那张）：
+**换内置图**（所有人 / 所有工作区默认看到的那张）：
 
 ```bash
 python tools/make-asset.py "/path/to/your-picture.png"   # 需要 Pillow
 node tools/build-client.mjs
 ```
 
-**改默认浓度等参数**：`src/client.template.js` 顶部的 `DEFAULTS`，改完 `node tools/build-client.mjs`：
+**改出厂参数**：`src/client.template.js` 顶部的 `DEFAULTS`，改完 `node tools/build-client.mjs`：
 
 | 键 | 含义 |
 |---|---|
@@ -157,34 +190,41 @@ node tools/build-client.mjs
 | `imageSize` / `imagePosition` | 对应 `background-size` / `background-position` |
 | `embedded` | 是否也给右栏 subagent 的内嵌会话铺图 |
 
-**运行时调**（渲染端控制台，同样写进 `localStorage`）：
+**运行时调**（渲染端控制台，同样写进 `localStorage`）。`setConfig` 编辑**默认**范围，
+`update` / `clearScope` 编辑某个工作区：
 
 ```js
-__DSH_CHAT_BACKDROP__.config                        // 当前值
-__DSH_CHAT_BACKDROP__.setConfig({ opacity: 0.85 })  // 立刻生效
-__DSH_CHAT_BACKDROP__.setConfig({ cardBlur: 0 })    // 关掉卡片磨砂
-__DSH_CHAT_BACKDROP__.reset()                       // 回到默认
+__DSH_CHAT_BACKDROP__.config                            // 当前生效值
+__DSH_CHAT_BACKDROP__.scope                             // 当前工作区 id（或 'default'）
+__DSH_CHAT_BACKDROP__.workspaces()                      // 有覆盖的工作区 id
+__DSH_CHAT_BACKDROP__.setConfig({ opacity: 0.85 })      // 改默认范围
+__DSH_CHAT_BACKDROP__.update('<workspaceId>', { opacity: 0.4 })   // 给某工作区覆盖
+__DSH_CHAT_BACKDROP__.clearScope('<workspaceId>')       // 删掉该工作区覆盖
+__DSH_CHAT_BACKDROP__.reset()                           // 全部恢复出厂
 ```
 
 ## 目录
 
 | 路径 | 作用 |
 |---|---|
-| `src/client.template.js` | 浏览器半侧源码（`__BACKDROP_DATA_URL__` 是图片占位符） |
-| `tools/build-client.mjs` | 把模板 + `assets/backdrop.webp` 合成 `dist/client.js`（零依赖 Node 脚本） |
+| `src/client.template.js` | 浏览器半侧源码（`__BACKDROP_DATA_URL__` / `/* __BACKDROP_STORE__ */` 是构建占位符） |
+| `src/backdrop-store.js` | 存储/迁移/范围解析（无 DOM，ESM）；构建时内联进 `dist/client.js` |
+| `tools/build-client.mjs` | 把模板 + store + `assets/backdrop.webp` 合成 `dist/client.js`（零依赖 Node 脚本） |
+| `tools/test-store.mjs` | store 的单元测试（迁移、逐字段覆盖、删除、重置、配额失败、原型污染） |
 | `tools/make-asset.py` | 把任意源图缩放/编码成 `assets/backdrop.webp` |
 | `tools/preview-crop.py` | 离线生成上面那张设计预览 |
 | `dist/client.js` | 真正被宿主伺服给浏览器的产物（**提交进仓库**，不要手改） |
 | `lib/index.js` | 宿主半侧：空的 `apply()`，只为让 Loader 认识这个包 |
 | `cordis.patch.yml` | 本组合包的补丁层：插入一行 `chat-backdrop` |
-| `.github/workflows/verify.yml` | CI：确认 `dist/client.js` 与源码同步、能解析、manifest 指向真实文件 |
+| `.github/workflows/verify.yml` | CI：重建 dist 并 diff、`node --check`、跑 store 单测、校验 manifest |
 
 ## 验证（没有浏览器控制时）
 
 官方插件规范要求：没有浏览器控制时，验证限于 **JS 语法 + manifest + 活的 Client slot**。
-本插件把这三样都做到，并把「样式到底有没有生效」编进一个可 inspect 的占位 id：
+本插件在这三样之外还做了两件：store 有真正的单元测试（CI 里跑），运行中的页面把
+「样式有没有生效 / 当前是哪个范围 / 覆盖链路通不通」编进一个可 inspect 的占位 id。
 
-1. **语法**：`node --check dist/client.js`
+1. **语法与单测**：`node --check dist/client.js`、`node tools/test-store.mjs`
 2. **manifest**：插件页 / `plugin_manager list_bundles` 里出现 `dsh-plugin-chat-backdrop`，
    `enabled: true`，行 `chat-backdrop` 存在
 3. **活的 Client slot**（需要页面连着）：
@@ -196,21 +236,25 @@ cordis_inspect_query platform=client provider=Slots method=listSubTree
     input={"root":"conversation.composer.dock"}   # 读自检位串
 ```
 
-自检 id 形如 `chat-backdrop-diag-s1a1i1v1h1c84o62u0w1b1s1-dark-has`：
+自检 id 形如 `chat-backdrop-diag-s1a1i1v1h1c84o13u1w1b1s1-g0k17e44dt1-dark-has`：
 
 | 位 | 含义 |
 |---|---|
 | `s1` | `<style data-plugin="…">` 在文档里 |
 | `a1` | `<html data-dsh-chat-backdrop="1">` 已设置 |
 | `i1` / `v1` | `--dshx-cb-image` 在 `<html>`、`--dshx-cb-surface` 在 `<body>` 上解析出值 |
-| `h1` | `[data-conversation-content]` 的 computed `background-image` 里含图片 |
+| `h1` | 主对话 `[data-conversation-content]` 的 computed `background-image` 里含图片 |
 | `c84` | 输入卡片 computed alpha = 0.84（= `cardKeep`，说明 token 重绑生效） |
-| `o62` | 当前配置的 `opacity` × 100 |
-| `u0`/`u1` | 0 = 内置图；1 = 正在用设置页自选的图 |
-| `w1` / `b1` / `s1`(末位) | canvas 能编 WebP / `createImageBitmap` 可用 / `localStorage` 可写 |
+| `o13` | 当前范围的生效 `opacity` × 100 |
+| `u0`/`u1` | 0 = 内置图；1 = 在用自选图 |
+| `w1` / `b1` / `s1`(这里) | canvas 能编 WebP / `createImageBitmap` 可用 / `localStorage` 可写 |
+| `g0`/`g1` | 当前工作区是否有自己的覆盖 |
+| `k17e44d` | 当前工作区 id 的 6 位哈希；`d` = 没有工作区（用默认） |
+| `t1`/`t0`/`t-` | 运行时覆盖链路自检：写入临时覆盖→生效→删除还原，通过 / 失败 / 无工作区跳过 |
 | `dark`/`light` | 当前主题 |
 
-任何一位掉下来，就知道是哪一步断了（钩子改名 / 变量没解析 / 选择器没匹配 / 重绑失效）。
+任何一位掉下来，就知道是哪一步断了（钩子改名 / 变量没解析 / 选择器没匹配 / 重绑失效 /
+范围没解析 / 覆盖链路断了）。
 
 > 坑：`settings.general.item` 是 `settings.section` 里 general 条目的 child，**只在设置面板那一条
 > entry 挂载期间才被声明**。面板没打开时 `listSubTree` 里既没有官方行也没有本插件的行——
@@ -236,15 +280,17 @@ cordis_inspect_query platform=client provider=Slots method=listSubTree
   所以图片从正文顶部开始。想连头部一起铺需要运行时向上找根容器并打标记，属于可选增强。
 - **Trajectory / Review 视图会整块盖住壁纸**（它们自己用不透明的 `--dsw-alias-bg-layer-1`），
   这是宿主设计，不去硬改；菜单、模态框、Tooltip 同理不受影响。
-- 自选图存在渲染端 `localStorage`，**不进** profile 配置：换机器 / 清缓存就没了；
+- 配置（含每个工作区自选的图）存在渲染端 `localStorage`，**不进** profile 配置：换机器 / 清缓存就没了；
   想变成"出厂默认图"要走 `tools/make-asset.py` + 重新构建。
+- 工作区覆盖按 `workspaceId` 存：工作区改名不受影响；**删除**工作区会留下一条不可见的孤儿记录
+  （不影响使用，也不占多少空间；想清理可 `__DSH_CHAT_BACKDROP__.clearScope('<id>')`）。
 - 自选图会降采样到长边 2400px 再存，不是原图无损；要原图效果请改内置图。
-- 只在**装了它的 profile** 里生效。
+- 只在**装了它的 profile** 里生效；右栏内嵌的 subagent 会话不铺图。
 
 ## 许可与素材
 
 代码：[MIT](LICENSE)。
 
-内置示例图（`assets/backdrop.webp`，雾中图书馆）是作者的本地素材，仅作**示例**；
+内置图（`assets/backdrop.webp`，云虫-月牙-凝视地球仪）是作者的本地素材，仅作**示例**；
 它已压缩内联进 `dist/client.js`。如果你 fork 这个仓库，请自行确认这张图的使用权，
 或按上面「换内置图」的步骤替换成你自己的图片 / 纯色。设置页选图功能不依赖内置图。

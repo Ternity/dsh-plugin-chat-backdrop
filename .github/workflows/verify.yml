@@ -28,6 +28,8 @@ jobs:
           fi
       - name: Bundle must parse
         run: node --check dist/client.js
+      - name: Storage, migration and scope rules
+        run: node tools/test-store.mjs
       - name: Manifests must parse and point at real files
         run: node -e "
           const fs = require('node:fs');
