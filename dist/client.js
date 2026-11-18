@@ -957,7 +957,17 @@ function createBackdropStore({ storage, key, defaults }) {
 
   // ── copy ────────────────────────────────────────────────────────────────
 
-  const LANG = String(document.documentElement.lang || navigator.language || 'zh').toLowerCase();
+  // The module body must not touch the DOM: in the client-plugin model a bundle
+  // that fails while its script executes registers nothing, which the boot audit
+  // reports as a dead entry. Only the language probe reads the document, so it
+  // is the one statement that carries a guard.
+  let LANG = 'zh';
+  try {
+    LANG = String((document.documentElement && document.documentElement.lang) || navigator.language || 'zh')
+      .toLowerCase();
+  } catch {
+    /* keep the default */
+  }
   const DICT = {
     zh: {
       scopeTitle: '作用范围',
@@ -1435,34 +1445,74 @@ function createBackdropStore({ storage, key, defaults }) {
   const SETTINGS_ORDER = 13; // language 0 · appearance 10 · font-size 11 · transcript-view 12 · …
   const LOCALE_NS = MODULE_ID;
 
+  /**
+   * Run one activation step and swallow its failure.
+   *
+   * A client plugin is all-or-nothing for the whole page: an entry that does not
+   * activate fails the web boot ("N entries did not activate"), and a throwing
+   * `apply` leaves an entry with a failed fiber. For a decoration plugin that is
+   * never an acceptable outcome — a missing wallpaper beats a dead window — so
+   * every step is isolated: whatever breaks stops at itself and lands in the
+   * console, and the rest of the plugin still activates.
+   */
+  function safely(ctx, label, step) {
+    try {
+      step();
+    } catch (error) {
+      const message = `${MODULE_ID}: ${label} failed (the rest of the plugin keeps running)`;
+      try {
+        if (ctx && ctx.logger && typeof ctx.logger.warn === 'function') ctx.logger.warn(message, error);
+        else console.warn(message, error);
+      } catch {
+        /* logging must never rethrow */
+      }
+    }
+  }
+
+  /** An inert plugin: activates instantly, contributes nothing. */
+  function inertPlugin() {
+    return { apply() {}, inject: [] };
+  }
+
   window.__ModuleLoader__.load({
     id: MODULE_ID,
     factory: (require) => {
-      const module = { exports: {} };
-      const React = require('react');
-      // `slots` renders the rows, `locale` carries their copy; the wallpaper
-      // itself is pure DOM + CSS, and React comes from the browser module table.
-      const inject = ['slots', 'locale'];
-      function apply(ctx) {
-        start(ctx);
-        registerProbes(ctx, React);
-        ctx.effect(
-          () => ctx.locale.register(LOCALE_NS, DICT),
-          `${MODULE_ID}: dictionaries`,
-        );
-        ctx.slots.inject(SETTINGS_SLOT, () => ctx.slots.register(
-          {
-            name: SETTINGS_SLOT,
-            id: 'chat-backdrop',
-            order: SETTINGS_ORDER,
-            locale: LOCALE_NS,
-          },
-          createSettingsRow(React),
-        ));
+      // Materialization happens inside the module system, where a throw is
+      // recorded as an import failure — so the factory never throws either.
+      let React;
+      try {
+        React = require('react');
+      } catch (error) {
+        console.warn(`${MODULE_ID}: react is unavailable; the backdrop stays off`, error);
+        return inertPlugin();
       }
-      module.exports.apply = apply;
-      module.exports.inject = inject;
-      return module.exports;
+      try {
+        return {
+          // `slots` renders the rows, `locale` carries their copy; the wallpaper
+          // itself is pure DOM + CSS. Declared so the entry waits for both.
+          inject: ['slots', 'locale'],
+          apply(ctx) {
+            safely(ctx, 'backdrop variables', () => start(ctx));
+            safely(ctx, 'slot occupants', () => registerProbes(ctx, React));
+            safely(ctx, 'dictionaries', () => ctx.effect(
+              () => ctx.locale.register(LOCALE_NS, DICT),
+              `${MODULE_ID}: dictionaries`,
+            ));
+            safely(ctx, 'settings row', () => ctx.slots.inject(SETTINGS_SLOT, () => ctx.slots.register(
+              {
+                name: SETTINGS_SLOT,
+                id: 'chat-backdrop',
+                order: SETTINGS_ORDER,
+                locale: LOCALE_NS,
+              },
+              createSettingsRow(React),
+            )));
+          },
+        };
+      } catch (error) {
+        console.warn(`${MODULE_ID}: activation wiring failed; registering an inert plugin`, error);
+        return inertPlugin();
+      }
     },
   });
 })();

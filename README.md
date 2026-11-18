@@ -218,6 +218,29 @@ __DSH_CHAT_BACKDROP__.reset()                           // 全部恢复出厂
 | `cordis.patch.yml` | 本组合包的补丁层：插入一行 `chat-backdrop` |
 | `.github/workflows/verify.yml` | CI：重建 dist 并 diff、`node --check`、跑 store 单测、校验 manifest |
 
+## 启动安全（v0.2.2 起）
+
+DSH 0.2.2 的 Web 启动有一项审计：**任何一个 client entry 没激活，整页启动就失败**
+（`Error: web boot: N entry did not activate` / `<包名>: import failed`）。对一个纯装饰插件来说
+这不能接受 —— 宁可没有壁纸，也不能让整个窗口打不开。所以 v0.2.2 做了三件事：
+
+1. **模块体不碰 DOM**：`dist/client.js` 在脚本执行阶段只做两件事 —— 声明函数、调用一次
+   `window.__ModuleLoader__.load({id, factory})`。唯一的 DOM 读取（语言探测）用 `try/catch`
+   兜住；其余副作用（注入 `<style>`、注册 slot）全部推迟到 `apply()`。
+2. **factory 与 apply 全部隔离**：`require('react')` 失败、任意一个注册步骤抛错，都只写一条
+   `console.warn`，然后插件照常激活（最差是"没有壁纸 / 没有设置行"，不会变成死 entry）。
+3. **不声明 `dsh.client.immediately`**：这个字段把 bundle 放进启动早期的 prefetch 批次，
+   第三方插件不需要它（仓库里其它能正常工作的第三方客户端插件也都没写）。
+
+CI 里新增了 `tools/test-bundle.mjs`：离线重放「脚本执行 → 注册 factory → apply」三步，
+任何一步抛错或注册不到都会 fail，这样"改坏了 bundle 导致页面起不来"在推之前就能发现。
+
+> 2026-11-18 事件：升级到 0.2.2-rc.1 后第一次冷启动报 `dsh-plugin-chat-backdrop: import failed`，
+> 页面打不开，临时在 profile 的 `cordis.patch.yml` 末尾加 `- id: chat-backdrop` + `disabled: true` 才恢复。
+> 事后用「宿主 graph → 本地镜像 → 无头 Edge」跑真实冷启动复现（脚本在
+> `~/.dsh/tools/web-boot-mirror/`），bundle 的**交付、注册、激活都正常**，说明不是 bundle 内容问题，
+> 更像更新当次冷启动的时序；上面三条加固正是为了让这一类失败不再拖死整页。
+
 ## 验证（没有浏览器控制时）
 
 官方插件规范要求：没有浏览器控制时，验证限于 **JS 语法 + manifest + 活的 Client slot**。

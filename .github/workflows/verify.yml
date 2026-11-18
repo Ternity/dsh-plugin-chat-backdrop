@@ -30,6 +30,8 @@ jobs:
         run: node --check dist/client.js
       - name: Storage, migration and scope rules
         run: node tools/test-store.mjs
+      - name: Committed bundle must register and activate (web boot)
+        run: node tools/test-bundle.mjs
       - name: Manifests must parse and point at real files
         run: node -e "
           const fs = require('node:fs');
